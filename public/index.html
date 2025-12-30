@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RTMP视频播放器</title>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 30px;
+            max-width: 1200px;
+            width: 100%;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+
+        .subtitle {
+            color: #666;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+
+        .input-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #555;
+            font-weight: 500;
+        }
+
+        input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            width: 100%;
+            margin-top: 10px;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        .video-container {
+            position: relative;
+            width: 100%;
+            background: #000;
+            border-radius: 12px;
+            overflow: hidden;
+            margin-top: 20px;
+            aspect-ratio: 16/9;
+        }
+
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        .status {
+            margin-top: 15px;
+            padding: 12px;
+            border-radius: 8px;
+            text-align: center;
+            font-weight: 500;
+        }
+
+        .status.info {
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+
+        .status.success {
+            background: #e8f5e9;
+            color: #388e3c;
+        }
+
+        .status.error {
+            background: #ffebee;
+            color: #d32f2f;
+        }
+
+        .info-box {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        .info-box code {
+            background: #fff;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            color: #d32f2f;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎥 RTMP视频播放器</h1>
+        <p class="subtitle">接收并播放FFmpeg推送的RTMP流</p>
+        
+        <div class="input-group">
+            <label for="streamName">流名称 (Stream Name):</label>
+            <input type="text" id="streamName" placeholder="例如: test" value="test">
+        </div>
+
+        <button onclick="playStream()">▶️ 播放视频</button>
+        <button onclick="stopStream()" style="background: #f44336; margin-top: 10px;">⏹️ 停止播放</button>
+
+        <div class="video-container">
+            <video id="videoPlayer" controls></video>
+        </div>
+
+        <div id="status" class="status info" style="display: none;"></div>
+
+        <div class="info-box">
+            <strong>📋 使用说明:</strong><br>
+            1. 启动服务器: <code>npm start</code><br>
+            2. 使用FFmpeg推流: <code>ffmpeg -re -i your_video.mp4 -c copy -f flv rtmp://localhost:1935/live/test</code><br>
+            3. 在上方输入流名称（默认: test），点击"播放视频"按钮<br>
+            4. 视频将自动加载并播放
+        </div>
+    </div>
+
+    <script>
+        let hls = null;
+        const video = document.getElementById('videoPlayer');
+        const statusDiv = document.getElementById('status');
+
+        function showStatus(message, type = 'info') {
+            statusDiv.textContent = message;
+            statusDiv.className = `status ${type}`;
+            statusDiv.style.display = 'block';
+        }
+
+        function playStream() {
+            const streamName = document.getElementById('streamName').value.trim();
+            
+            if (!streamName) {
+                showStatus('❌ 请输入流名称', 'error');
+                return;
+            }
+
+            // 停止之前的流
+            stopStream();
+
+            const streamUrl = `http://localhost:8000/live/${streamName}/index.m3u8`;
+            showStatus(`🔄 正在加载流: ${streamUrl}...`, 'info');
+
+            if (Hls.isSupported()) {
+                hls = new Hls({
+                    enableWorker: true,
+                    lowLatencyMode: true,
+                    backBufferLength: 90
+                });
+
+                hls.loadSource(streamUrl);
+                hls.attachMedia(video);
+
+                hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                    showStatus('✅ 流加载成功，开始播放', 'success');
+                    video.play().catch(err => {
+                        showStatus('⚠️ 自动播放失败，请手动点击播放', 'error');
+                    });
+                });
+
+                hls.on(Hls.Events.ERROR, (event, data) => {
+                    if (data.fatal) {
+                        switch(data.type) {
+                            case Hls.ErrorTypes.NETWORK_ERROR:
+                                showStatus('❌ 网络错误: 无法连接到流服务器，请检查流是否正在推送', 'error');
+                                break;
+                            case Hls.ErrorTypes.MEDIA_ERROR:
+                                showStatus('❌ 媒体错误: 尝试恢复...', 'error');
+                                hls.recoverMediaError();
+                                break;
+                            default:
+                                showStatus('❌ 未知错误，请检查流名称是否正确', 'error');
+                                hls.destroy();
+                                break;
+                        }
+                    }
+                });
+            } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                // Safari原生支持HLS
+                video.src = streamUrl;
+                video.addEventListener('loadedmetadata', () => {
+                    showStatus('✅ 流加载成功，开始播放', 'success');
+                    video.play();
+                });
+                video.addEventListener('error', () => {
+                    showStatus('❌ 播放错误: 请检查流是否正在推送', 'error');
+                });
+            } else {
+                showStatus('❌ 浏览器不支持HLS播放', 'error');
+            }
+        }
+
+        function stopStream() {
+            if (hls) {
+                hls.destroy();
+                hls = null;
+            }
+            video.pause();
+            video.src = '';
+            showStatus('⏹️ 已停止播放', 'info');
+        }
+
+        // 页面加载时自动播放（如果URL中有stream参数）
+        window.addEventListener('load', () => {
+            const urlParams = new URLSearchParams(window.location.search);
+            const streamParam = urlParams.get('stream');
+            if (streamParam) {
+                document.getElementById('streamName').value = streamParam;
+                setTimeout(playStream, 500);
+            }
+        });
+    </script>
+</body>
+</html>
+
