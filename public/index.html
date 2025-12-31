@@ -5,6 +5,51 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RTMP视频播放器</title>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <!-- 使用多个 CDN 源作为备选，确保加载完成 -->
+    <script>
+        // 尝试加载 flv.js，如果失败则尝试其他 CDN
+        window.flvjsLoaded = false;
+        (function() {
+            const cdnSources = [
+                'https://unpkg.com/flv.js@1.6.2/dist/flv.min.js',
+                'https://cdn.bootcdn.net/ajax/libs/flv.js/1.6.2/flv.min.js',
+                'https://cdn.jsdelivr.net/npm/flv.js@1.6.2/dist/flv.min.js'
+            ];
+            
+            let currentIndex = 0;
+            
+            function loadScript(src) {
+                return new Promise((resolve, reject) => {
+                    const script = document.createElement('script');
+                    script.src = src;
+                    script.onload = () => {
+                        window.flvjsLoaded = true;
+                        console.log('✅ flv.js 加载成功:', src);
+                        resolve();
+                    };
+                    script.onerror = () => {
+                        console.warn('❌ CDN 加载失败:', src);
+                        reject();
+                    };
+                    document.head.appendChild(script);
+                });
+            }
+            
+            function tryNext() {
+                if (currentIndex < cdnSources.length) {
+                    loadScript(cdnSources[currentIndex])
+                        .catch(() => {
+                            currentIndex++;
+                            tryNext();
+                        });
+                } else {
+                    console.error('⚠️ 所有 CDN 源都加载失败，FLV 播放功能将不可用，将使用 HLS（需要转码）');
+                }
+            }
+            
+            tryNext();
+        })();
+    </script>
     <style>
         * {
             margin: 0;
@@ -170,7 +215,7 @@
         <div class="info-box">
             <strong>📋 使用说明:</strong><br>
             1. 启动服务器: <code>npm start</code><br>
-            2. 使用FFmpeg推流: <code>ffmpeg -re -i your_video.mp4 -c copy -f flv rtmp://localhost:1935/live/test</code><br>
+            2. 使用FFmpeg推流: <code>ffmpeg -re -i your_video.mp4 -c copy -f flv rtmp://localhost:19935/live/test</code><br>
             3. 在上方输入流名称（默认: test），点击"播放视频"按钮<br>
             4. 视频将自动加载并播放
         </div>
@@ -198,9 +243,95 @@
             // 停止之前的流
             stopStream();
 
-            const streamUrl = `http://localhost:8000/live/${streamName}/index.m3u8`;
+            // 使用 HTTP-FLV 播放（无需转码）
+            const streamUrl = `http://localhost:18889/live/${streamName}.flv`;
             showStatus(`🔄 正在加载流: ${streamUrl}...`, 'info');
 
+            // 使用 flv.js 播放 FLV 流
+            // 等待 flv.js 加载完成（最多等待 3 秒）
+            const checkFlvjs = () => {
+                if (typeof flvjs !== 'undefined' && window.flvjsLoaded && flvjs.isSupported()) {
+                    return true;
+                }
+                return false;
+            };
+            
+            if (checkFlvjs()) {
+                if (hls) {
+                    hls.destroy();
+                    hls = null;
+                }
+                
+                try {
+                    const flvPlayer = flvjs.createPlayer({
+                        type: 'flv',
+                        url: streamUrl,
+                        isLive: true,
+                        hasAudio: true,
+                        hasVideo: true
+                    });
+                    flvPlayer.attachMediaElement(video);
+                    flvPlayer.load();
+                    
+                    flvPlayer.on(flvjs.Events.LOADING_COMPLETE, () => {
+                        showStatus('✅ 流加载成功，开始播放', 'success');
+                        video.play().catch(err => {
+                            showStatus('⚠️ 自动播放失败，请手动点击播放', 'error');
+                        });
+                    });
+                    
+                    flvPlayer.on(flvjs.Events.MEDIA_INFO, (mediaInfo) => {
+                        console.log('FLV媒体信息:', mediaInfo);
+                        showStatus('✅ 流信息加载成功，准备播放', 'success');
+                    });
+                    
+                    flvPlayer.on(flvjs.Events.ERROR, (errorType, errorDetail, errorInfo) => {
+                        console.error('FLV播放错误:', errorType, errorDetail, errorInfo);
+                        if (errorType === flvjs.ErrorTypes.NETWORK_ERROR) {
+                            showStatus('❌ 网络错误: 无法连接到流，请确保流正在推送', 'error');
+                        } else if (errorType === flvjs.ErrorTypes.MEDIA_ERROR) {
+                            showStatus('❌ 媒体错误: 流格式可能不支持', 'error');
+                        } else {
+                            showStatus(`❌ 播放错误: ${errorDetail || '未知错误'}`, 'error');
+                        }
+                    });
+                    
+                    // 保存播放器引用以便停止
+                    window.flvPlayer = flvPlayer;
+                } catch (error) {
+                    console.error('创建FLV播放器失败:', error);
+                    showStatus('❌ 创建播放器失败，尝试使用HLS', 'error');
+                    // 回退到 HLS
+                    tryHlsPlayback(streamName);
+                }
+            } else {
+                // 如果 flv.js 还没加载完成，等待一下再检查
+                if (!window.flvjsLoaded && typeof flvjs === 'undefined') {
+                    showStatus('⏳ 正在加载播放器库，请稍候...', 'info');
+                    let waitCount = 0;
+                    const checkInterval = setInterval(() => {
+                        waitCount++;
+                        if (checkFlvjs()) {
+                            clearInterval(checkInterval);
+                            playStream(); // 重新尝试播放
+                        } else if (waitCount > 30) { // 等待最多 3 秒
+                            clearInterval(checkInterval);
+                            console.warn('flv.js 加载超时，尝试使用HLS');
+                            tryHlsPlayback(streamName);
+                        }
+                    }, 100);
+                } else {
+                    console.warn('flv.js 不可用或不支持，尝试使用HLS');
+                    tryHlsPlayback(streamName);
+                }
+            }
+        }
+
+        function tryHlsPlayback(streamName) {
+            // 如果没有 flv.js，尝试使用 HLS（需要转码）
+            const hlsUrl = `http://localhost:18889/live/${streamName}/index.m3u8`;
+            showStatus(`⚠️ 尝试使用HLS播放（需要转码）: ${hlsUrl}...`, 'info');
+            
             if (Hls.isSupported()) {
                 hls = new Hls({
                     enableWorker: true,
@@ -208,7 +339,7 @@
                     backBufferLength: 90
                 });
 
-                hls.loadSource(streamUrl);
+                hls.loadSource(hlsUrl);
                 hls.attachMedia(video);
 
                 hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -219,10 +350,11 @@
                 });
 
                 hls.on(Hls.Events.ERROR, (event, data) => {
+                    console.error('HLS播放错误:', data);
                     if (data.fatal) {
                         switch(data.type) {
                             case Hls.ErrorTypes.NETWORK_ERROR:
-                                showStatus('❌ 网络错误: 无法连接到流服务器，请检查流是否正在推送', 'error');
+                                showStatus('❌ HLS网络错误: 无法连接到流服务器。请确保：1) 流正在推送 2) 已启用转码功能', 'error');
                                 break;
                             case Hls.ErrorTypes.MEDIA_ERROR:
                                 showStatus('❌ 媒体错误: 尝试恢复...', 'error');
@@ -237,7 +369,7 @@
                 });
             } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
                 // Safari原生支持HLS
-                video.src = streamUrl;
+                video.src = hlsUrl;
                 video.addEventListener('loadedmetadata', () => {
                     showStatus('✅ 流加载成功，开始播放', 'success');
                     video.play();
@@ -254,6 +386,13 @@
             if (hls) {
                 hls.destroy();
                 hls = null;
+            }
+            if (window.flvPlayer) {
+                window.flvPlayer.pause();
+                window.flvPlayer.unload();
+                window.flvPlayer.detachMediaElement();
+                window.flvPlayer.destroy();
+                window.flvPlayer = null;
             }
             video.pause();
             video.src = '';

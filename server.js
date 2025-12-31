@@ -4,7 +4,7 @@ const path = require('path');
 const { execSync } = require('child_process');
 
 const app = express();
-const PORT = 3000;
+const PORT = 18888;
 
 // 静态文件服务
 app.use(express.static('public'));
@@ -38,14 +38,14 @@ try {
 // RTMP服务器配置
 const config = {
   rtmp: {
-    port: 1935,
+    port: 19935,
     chunk_size: 60000,
     gop_cache: true,
     ping: 30,
     ping_timeout: 60
   },
   http: {
-    port: 8000,
+    port: 18889,
     allow_origin: '*',
     mediaroot: './media',
   },
@@ -77,8 +77,8 @@ nms.on('prePublish', (id, StreamPath, args) => {
 
 nms.on('postPublish', (id, StreamPath, args) => {
   console.log('[NodeEvent on postPublish]', `id=${id} StreamPath=${StreamPath} args=${JSON.stringify(args)}`);
-  console.log(`✅ 流已发布: rtmp://localhost:1935${StreamPath}`);
-  console.log(`📺 播放地址: http://localhost:8000${StreamPath}/index.m3u8`);
+  console.log(`✅ 流已发布: rtmp://localhost:19935${StreamPath}`);
+  console.log(`📺 播放地址: http://localhost:18889${StreamPath}/index.m3u8`);
 });
 
 nms.on('prePlay', (id, StreamPath, args) => {
@@ -114,7 +114,8 @@ nms.on('doneTranscode', (id, StreamPath, args) => {
 nms.run();
 
 console.log('🚀 RTMP服务器启动成功!');
-console.log(`📡 RTMP推流地址: rtmp://localhost:1935/live/STREAM_NAME`);
+console.log(`📡 RTMP推流地址格式: rtmp://localhost:19935/live/{流名称}`);
+console.log(`   示例: rtmp://localhost:19935/live/test`);
 console.log(`🌐 HTTP服务器: http://localhost:${PORT}`);
-console.log(`📺 HLS播放地址: http://localhost:8000/live/STREAM_NAME/index.m3u8`);
+console.log(`📺 HLS播放地址: http://localhost:18889/live/{流名称}/index.m3u8`);
 
